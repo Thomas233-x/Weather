@@ -1,0 +1,4 @@
+requests
+kivy
+https://github.com/kivymd/KivyMD/archive/master.zip
+google-genai

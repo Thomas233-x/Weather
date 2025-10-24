@@ -1,0 +1,32 @@
+<attachment id="file:gps-location-app/gps-location-app/src/ui/app.kv">
+<layout>
+    BoxLayout:
+        orientation: 'vertical'
+        padding: 10
+        spacing: 10
+
+        Label:
+            text: 'GPS Location App'
+            font_size: 24
+            size_hint_y: None
+            height: 50
+
+        Button:
+            text: 'Get Current Location'
+            size_hint_y: None
+            height: 50
+            on_release: app.get_current_location()
+
+        Label:
+            id: location_label
+            text: 'Location will be displayed here'
+            size_hint_y: None
+            height: 50
+
+        Button:
+            text: 'Refresh Location'
+            size_hint_y: None
+            height: 50
+            on_release: app.refresh_location()
+</layout>
+</attachment>
