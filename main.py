@@ -78,7 +78,7 @@ else:
     print(f"使用するフォント: {FONT_PATH}")
 
 # デバッグ: ウィンドウサイズと背景色を固定（見えない問題対策）
-Window.size = (480, 720)
+Window.size = (800, 600)
 Window.clearcolor = (1, 1, 1, 1)  # 白背景
 print("DEBUG: Window.size set", Window.size)
 
@@ -96,8 +96,9 @@ class AISuggestionEngine:
             print("警告: google.genai モジュールが利用できません。Gemini 呼び出しは無効になります。")
             return
 
-        if not self.gemini_key:
-            print("情報: GEMINI_API_KEY が設定されていません。Gemini 呼び出しはスキップされます。")
+        # Gemini を使う条件を厳しくする（'your_key' 等のプレースホルダで誤呼び出ししない）
+        if not self.gemini_key or self.gemini_key.strip().lower() in ("", "your_api_key", "api_key", "none", "null"):
+            print("情報: 有効な GEMINI_API_KEY が設定されていません。Gemini 呼び出しはスキップされます。")
             return
 
         try:
@@ -125,7 +126,7 @@ class AISuggestionEngine:
 
     def get_weather_data(self):
         """OpenWeatherMap API から現在の天気データを取得する"""
-        # テスト用モック: 環境変数に 'mock' を設定するとここが返る（実ネットワーク呼び出しをスキップ）
+        # テスト用モック:
         if self.weather_key == 'mock':
             return {
                 "location": "テスト市",
@@ -138,20 +139,28 @@ class AISuggestionEngine:
             }
         if not self.weather_key:
             return {"error": "OpenWeatherMap の API キーが設定されていません"}
-            
-        # 現在地（IPベース）を取得して API 呼び出しに使う
-        lat, lon, city = self.get_current_location()
-        url = (
-            f"https://api.openweathermap.org/data/2.5/weather?"
-            f"lat={lat}&lon={lon}&units={WEATHER_UNITS}&appid={self.weather_key}"
-        )
+
+        # 優先: CITY_WEATHER_URL が設定されていれば都市名 API を使う（テストで埋めた URL）
+        if 'CITY_WEATHER_URL' in globals() and CITY_WEATHER_URL:
+            url = CITY_WEATHER_URL
+        else:
+            # 現在地（IPベース）を取得して API 呼び出しに使う
+            lat, lon, city = self.get_current_location()
+            url = (
+                f"https://api.openweathermap.org/data/2.5/weather?"
+                f"lat={lat}&lon={lon}&units={WEATHER_UNITS}&appid={self.weather_key}"
+            )
+        # URL が都市名 API の場合は city 情報を補完する（ログ目的）
+        if url == CITY_WEATHER_URL:
+            print(f"DEBUG: Using CITY_WEATHER_URL -> {CITY} ({url})")
+            lat = lon = None
+            city = CITY
         try:
             response = requests.get(url, timeout=10)
             response.raise_for_status()
             data = response.json()
             print(f"DEBUG: get_weather_data -> url={url}")
             print("DEBUG: get_weather_data -> response keys:", list(data.keys()))
-            # optional: print a short JSON snippet
             print("DEBUG: get_weather_data -> snippet:", json.dumps(data)[:400])
             
             weather_info = {
@@ -161,7 +170,6 @@ class AISuggestionEngine:
                 "temp_min": data["main"]["temp_min"],
                 "humidity": data["main"]["humidity"],
                 "description": data["weather"][0]["description"],
-                # OpenWeatherMap に確率がなければ rain の 1h 値を利用（なければ 0）
                 "rain_prob": data.get("rain", {}).get("1h", 0) * 10 if data.get("rain") else 0
             }
             return weather_info
@@ -253,6 +261,25 @@ class AISuggestionEngine:
 
         except Exception as e:
             err_str = safe_error_str(e)
+
+            # --- 自動フォールバック: APIキー無効時はローカル提案を返す ---
+            if ("API key not valid" in err_str) or ("API_KEY_INVALID" in err_str) or ("api key" in err_str.lower() and "not valid" in err_str.lower()):
+                # ローカル簡易提案ロジック（get_ai_suggestion の上部と同じルールを採用）
+                t = weather_data.get("temp_current", 20)
+                rain = weather_data.get("rain_prob", 0)
+                desc = weather_data.get("description", "").lower()
+                if t < 5:
+                    outfit = "厚手のコート、マフラー、手袋"
+                elif t < 12:
+                    outfit = "ジャケットやセーター、長ズボン"
+                elif t < 20:
+                    outfit = "薄手の長袖または羽織り、長ズボン"
+                else:
+                    outfit = "半袖Tシャツ、軽い羽織りがあれば可"
+                umbrella = "傘が必要" if (rain > 0 or "rain" in desc or "雨" in desc) else "傘は不要"
+                return {"outfit_suggestion": outfit, "umbrella_needed": umbrella}
+
+            # それ以外はエラーとして返す
             return {"error": f"Gemini API 呼び出しまたは解析でエラーが発生しました: {err_str}"}
 
 
@@ -279,10 +306,11 @@ class OutfitRecommenderApp(MDApp):
             text="AI 今日の服装提案",
             halign="center",
             size_hint_y=None,
-            height=dp(50),
-            markup=False,
+            height=dp(60),
+            markup=True,
             font_name=("AppFont" if FONT_PATH else None),
-            font_size=dp(22)
+            font_size=dp(28),
+            color=(0, 0, 0, 1)
         )
 
         self.result_layout = BoxLayout(
@@ -304,7 +332,8 @@ class OutfitRecommenderApp(MDApp):
             valign="middle",
             markup=True,
             font_name=("AppFont" if FONT_PATH else None),
-            font_size=dp(18)
+            font_size=dp(22),
+            color=(0, 0, 0, 1)
         )
         self.umbrella_label = Label(
             text="[データを待っています...]",
@@ -312,7 +341,8 @@ class OutfitRecommenderApp(MDApp):
             valign="middle",
             markup=True,
             font_name=("AppFont" if FONT_PATH else None),
-            font_size=dp(16)
+            font_size=dp(20),
+            color=(0, 0, 0, 1)
         )
 
         self.result_layout.add_widget(self.outfit_label)
@@ -378,9 +408,9 @@ class OutfitRecommenderApp(MDApp):
         outfit = ai_suggestion.get("outfit_suggestion", "情報なし")
         umbrella = ai_suggestion.get("umbrella_needed", "情報なし")
         
-        # Kivy の markup では color タグを使う（16進カラー、先頭の # は省略可）
-        self.outfit_label.text = f"[color=0000FF]服装提案:[/color] {outfit}"
-        self.umbrella_label.text = f"[color=0000FF]傘の必要性:[/color] {umbrella}"
+        # 表示は大きく黒で出す
+        self.outfit_label.text = f"[color=000000]服装提案:[/color] {outfit}"
+        self.umbrella_label.text = f"[color=000000]傘の必要性:[/color] {umbrella}"
 
     def show_error_snackbar(self, text):
         print("DEBUG: show_error_snackbar():", text)
